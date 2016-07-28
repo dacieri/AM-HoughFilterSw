@@ -20,8 +20,8 @@ Settings::Settings(unsigned htType, unsigned xbins, unsigned ybins, unsigned ave
 	averageRes_ = averageRes;
 	// resPhi_ = 0.035;
 	resPhi_ = 0.035;
-	resZ0_ = 0;
+	resZ0_ = 1.82*5;
 	resTheta_ = 0;
 	debug_ = debug;
-	chosenRofPhi_ = 65.;
+	chosenRofPhi_ = 0.;
 }

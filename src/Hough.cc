@@ -8,7 +8,9 @@ void Hough::init(Settings* settings, double xmin, double xmax, double ymin, doub
 	bField_ = 3.8112;
 	double minTrackPt = 3.;
 
+	// No Average Resolution
 	if(settings->averageRes()==0){
+		// Rphi Hough Transform
 		if(settings->HoughType()==0){
 			if(charge == -1){
 				if(xmin > minTrackPt)
@@ -31,7 +33,8 @@ void Hough::init(Settings* settings, double xmin, double xmax, double ymin, doub
 					xmax_ = 1/minTrackPt;
 				}
 			}
-		} else {
+		} // Rz Hough Transform
+		else {
 			xmin_ = 1/tan(xmax);
 			xmax_ = 1/tan(xmin);
 		}
@@ -44,9 +47,11 @@ void Hough::init(Settings* settings, double xmin, double xmax, double ymin, doub
 			ymax_ = ymax ;
 		else
 			ymax_ = 15.;
-	} else{
+	} // Average Resolution 
+	else{
 		double xmean = (xmin+xmax)/2.;
 		ymean_ = (ymin+ymax)/2.;
+		// Rphi Hough Transform 
 		if(settings->HoughType()==0){
 			if(charge == -1){
 				xmin_ = charge/(xmin);
@@ -60,21 +65,26 @@ void Hough::init(Settings* settings, double xmin, double xmax, double ymin, doub
 			}
 			ymin_ = ymean_ - settings->phiResolution();
 			ymax_ = ymean_ + settings->phiResolution();
-		} else{
-			xmin_ = tan(xmean - settings->thetaResolution());
-			xmax_ = tan(xmean + settings->thetaResolution());
+		} 
+		else{
+			xmin_ = 1./tan(xmax);
+			xmax_ = 1./tan(xmin);
 			ymin_ = ymean_ - settings->z0Resolution();
 			ymax_ = ymean_ + settings->z0Resolution();
+			// cout << "xmin_ "<< xmin_ << " xmax_ "<< xmax_ << endl;
+			// cout << "ymin_ "<< ymin_ << " ymax_ "<< ymax_ << endl;
 		}
 	}
 
 	xbins_ = settings->numXbins();
 	ybins_ = settings->numYbins();
 	ybinsize_ = (ymax_ - ymin_)/ybins_;
-
 	xbinsize_ = (xmax_ - xmin_)/xbins_;
+
 	if(settings_->HoughType()==0 && settings_->averageRes()==1)
 		xbinsize_ = (2./3.)/xbins_;
+	else if(settings_->HoughType()==1 && settings_->averageRes()==1)
+		xbinsize_ = ((1./tan(0.8))-(1./tan(2.)))/xbins_;
 
 	invPtToDphi_ = bField_*(3.0E8/2.0E11);
 	chosenRofPhi_ = settings_->chosenRofPhi();
@@ -88,10 +98,17 @@ void Hough::store(Stub* stub){
 	for(unsigned int xbin = 0; xbin<xbins_ ; ++xbin){
 		// In this q/Pt bin, find the range of phi bins that this stub is consistent with.
 		bool goodXbin = true;
+		// rphi Hough Transform with average Resolution
 		if(settings_->HoughType()==0 && settings_->averageRes()==1){
 			float qOverPtBin = -1./3 + (xbin + 0.5) * xbinsize_;
 			if(qOverPtBin < xmin_ || qOverPtBin > xmax_)
 				goodXbin = false;
+		} // rz Hough Transform with average Resolution
+		else if(settings_->HoughType()==1 && settings_->averageRes()==1){
+			float TanThetaBin = 1/tan(2.) + (xbin + 0.5) * xbinsize_;
+			if(TanThetaBin < xmin_ || TanThetaBin > xmax_){
+				goodXbin = false;
+			}
 		}
 
 		pair<unsigned int, unsigned int> iRange;
@@ -103,9 +120,13 @@ void Hough::store(Stub* stub){
 
 		unsigned int yBinMin = iRange.first;
 		unsigned int yBinMax = iRange.second;
+
+		// cout << " yBinMin "<< yBinMin << " yBinMax "<< yBinMax << endl;
+
 		if(goodXbin){
 			for(unsigned int ybin = yBinMin; ybin <= yBinMax; ++ybin){
 				htArray_(xbin, ybin).store(stub);
+				// cout << "stub stored" << endl;
 			}
 		}
 	}
@@ -125,6 +146,7 @@ bool Hough::trackCandFound(){
 				numStubs = htArray_(xbin,ybin).numStubs();
 				if(htArray_(xbin,ybin).trackCandFound()){
 					candFound = true;
+					// cout << "candidate found "<< endl;
 				}
 			}
 			if(htArray_(xbin,ybin).trackCandFound() && settings_->debug()==1 && InputStubs_.size() > 15){
@@ -213,7 +235,11 @@ int Hough::PhiBin(Stub* stub, unsigned int xbin){
 
 std::pair<unsigned int, unsigned int> Hough::iZ0Range(Stub* stub, unsigned int xbin){
 	// Note tan(theta) value corresponding to centre of this bin.
-  float cotanThetaBin    = xmin_ + (xbin + 0.5) * xbinsize_;
+	float cotanThetaBin;
+	if(settings_->averageRes() == 0)
+  		cotanThetaBin = xmin_ + (xbin + 0.5) * xbinsize_;
+  	else 
+  		cotanThetaBin = 1/tan(2.) + (xbin + 0.5) * xbinsize_;
   // Note change in this q/Pt value needed to reach either edge of the bin. 
   float cotanThetaBinVar = 0.5*xbinsize_;
 

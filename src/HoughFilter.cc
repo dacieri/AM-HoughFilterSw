@@ -26,7 +26,44 @@
 
 using namespace std;
 
+bool insideEta(double r, double z){
+    double chosenRofZ_ = 45.;
+    double etaMin_ = -0.37;
+    double etaMax_ = 0.37;
+    double zOuterMin_ = chosenRofZ_ / tan( 2. * atan(exp(-etaMin_)) );
+    double zOuterMax_ = chosenRofZ_ / tan( 2. * atan(exp(-etaMax_)) );
+    double beamWindowZ_ = 15.;
 
+    double zMin = ( zOuterMin_ * r - beamWindowZ_ * fabs(r - chosenRofZ_) ) / chosenRofZ_;
+    // Calculate z coordinate of upper edge of this eta region, evaluated at radius of stub.
+    double zMax = ( zOuterMax_ * r + beamWindowZ_ * fabs(r - chosenRofZ_) ) / chosenRofZ_;
+
+    // zMin = ( zRangeMin * stub->r() - beamWindowZ_ * fabs(stub->r() - rOuterMin_) ) / rOuterMin_;
+    // zMax = ( zRangeMax * stub->r() + beamWindowZ_ * fabs(stub->r() - rOuterMax_) ) / rOuterMax_;
+
+    bool inside = (z > zMin && z < zMax);
+    return inside;
+}
+
+bool insidePhi( double phi, double r ){
+
+  // N.B. The logic here for preventing a stub being assigned to > 2 sectors seems overly agressive.
+  // But attempts at improving it have failed ...
+
+  bool okPhi    = true;
+
+  double phiCentre_ = 2.*M_PI * (0.5 + 26) / 32 - M_PI;
+  double invPtToDphi = 3.8112*(3.0E8/2.0E11);
+  double sectorHalfWidth_ = M_PI / 32; // Sector half width excluding overlaps.
+
+    float delPhi = phi - phiCentre_; // Phi difference between stub & sector in range -PI to +PI.
+    float tolerancePhi = fabs(r)*invPtToDphi/3.;
+
+    float outsidePhi = fabs(delPhi) - sectorHalfWidth_ - tolerancePhi; // If > 0, then stub is not compatible with being inside this sector. 
+    if (outsidePhi > 0) okPhi = false;
+  
+    return okPhi;
+}
 
 double GetYmax(TH1F* h1, TH1F *h2){
     double y1 = h1->GetBinContent(h1->GetMaximumBin());
@@ -266,16 +303,16 @@ int main(int argc, char* argv[]){
 
 
     // --- Book the histogram arrays:
-    TH1F *hPatterns = new TH1F("hPatterns","Number of Patterns per event",100,0,100);
-    TH1F *hStubsPerPattern = new TH1F("hStubsPerPattern","Number of Stubs per Pattern",32,0,32);
-    TH1F *hFilteredPatterns = new TH1F("hFilteredPatterns","Number of Filtered Patterns per event",100,0,100);
-    TH1F *hStubsPerFiltPattern = new TH1F("hStubsPerFiltPattern","Number of Stubs per Filtered Pattern",32,0,32);
+    TH1F *hPatterns = new TH1F("hPatterns","Number of Patterns per event",150,0,150);
+    TH1F *hStubsPerPattern = new TH1F("hStubsPerPattern","Number of Stubs per Pattern",64,0,64);
+    TH1F *hFilteredPatterns = new TH1F("hFilteredPatterns","Number of Filtered Patterns per event",150,0,150);
+    TH1F *hStubsPerFiltPattern = new TH1F("hStubsPerFiltPattern","Number of Stubs per Filtered Pattern",64,0,64);
     TH1F *hRecoTracks = new TH1F("hRecoTracks", "Number of reconstructed tracks per event", 50, 0, 50);
     TH1F *hFiltRecoTracks = new TH1F("hFiltRecoTracks", "Number of filtered tracks per event", 50, 0, 50);
-    TH1F *hComb = new TH1F("hComb", "Number of Combinations per pattern", 50, 0, 100);
-    TH1F *hFiltComb = new TH1F("hFiltComb", "Number of Combinations per filtered pattern", 50, 0, 100);
-    TH1F *hSpecComb = new TH1F("hSpecComb", "Number of Special Combinations per pattern", 50, 0, 100);
-    TH1F *hFiltSpecComb = new TH1F("hFiltSpecComb", "Number of Special Combinations per filtered pattern", 50, 0, 100);
+    TH1F *hComb = new TH1F("hComb", "Number of Combinations per pattern", 100, 0, 1000);
+    TH1F *hFiltComb = new TH1F("hFiltComb", "Number of Combinations per filtered pattern", 100, 0, 1000);
+    TH1F *hSpecComb = new TH1F("hSpecComb", "Number of Special Combinations per pattern", 100, 0, 1000);
+    TH1F *hFiltSpecComb = new TH1F("hFiltSpecComb", "Number of Special Combinations per filtered pattern", 100, 0, 1000);
     TGraph *gComb = new TGraph();
     gComb->SetTitle("Number of Combinations vs. number of filtered combinations per pattern");
     gComb->SetName("gComb");
@@ -466,6 +503,11 @@ int main(int argc, char* argv[]){
         roadCharge[key] = min;
     }
     unsigned int TracksOutOfRange = 0;
+    unsigned int nPatternsInAMsector = 0;
+    unsigned int RecoTPinAMsector = 0;
+
+    unsigned int nFiltPatternsInAMsector = 0;
+    unsigned int FiltRecoTPinAMsector = 0;
     unsigned int MissedTrack = 0;
     unsigned int point = 0;
     // Events loop
@@ -484,8 +526,11 @@ int main(int argc, char* argv[]){
         cout << "event "<< ientry << "/"<<n_events << endl;
         set<int> RecoTracks;
         set<int> RecoFiltTracks;
-        
+        set<int> RecoTracksInAMsector;
+        set<int> RecoFiltTracksInAMsector;
+
         for (int iroad=0; iroad<n_patterns; ++iroad){
+            bool patternInAMsector = false;
             if(patt_nmiss->at(iroad)!=0) continue;
 
 		    hStubsPerPattern->Fill(patt_links->at(iroad).size()); // Fill No. Stubs per pattern histogram
@@ -496,6 +541,7 @@ int main(int argc, char* argv[]){
             if(htType==0){
                 xmin = ptLimits[patt_id->at(iroad)].first;
                 xmax = ptLimits[patt_id->at(iroad)].second;
+                
                 if(settings->chosenRofPhi()==0){
                     ymin = phiLimits[patt_id->at(iroad)].first ;
                     ymax = phiLimits[patt_id->at(iroad)].second ;
@@ -514,8 +560,8 @@ int main(int argc, char* argv[]){
                     ymax = 2.9;
                 } else if(ymax - ymin < 0.001){
                     double ymean = (ymax+ymin)/2.;
-                    ymin = ymean - .015;
-                    ymax = ymean + .015;
+                    ymin = ymean - .035;
+                    ymax = ymean + .035;
                 } else{
                     ymin = ymin - 0.005;
                     ymax = ymax + 0.005;
@@ -563,6 +609,7 @@ int main(int argc, char* argv[]){
             map< int, vector<Stub*> > filtStubsPerTP;
 
             std::vector<unsigned int> vLayers(30,0);
+            std::vector<bool> vPhiLayers(30,0); 
 
             for (unsigned int istub=0; istub<patt_links->at(iroad).size(); ++istub ){
                 int stubRef = patt_links->at(iroad).at(istub);                
@@ -571,7 +618,25 @@ int main(int argc, char* argv[]){
                     StubsPerTP[stub_tp->at(stubRef)].push_back(stub);
                     ht->store(stub);
                     vLayers[stub_layer->at(stubRef)-5]++;
+                    double phi = stub_phi->at(stubRef);
+                    double z = stub_z->at(stubRef);
+                    double r = stub_r->at(stubRef);
+
+                    if(insideEta(r,z) && insidePhi(phi, r)){
+                        vPhiLayers[stub_layer->at(stubRef)-5] = true;
+                    }
                 }
+            }
+
+            unsigned int nPhiLayer = 0;
+            for(bool activeLayer : vPhiLayers){
+                if(activeLayer)
+                    nPhiLayer++;
+            }
+
+            if(nPhiLayer > 4){
+                nPatternsInAMsector++;
+                patternInAMsector = true;
             }
             // cout <<"layers loop ended"<< endl;
 
@@ -607,11 +672,12 @@ int main(int argc, char* argv[]){
                 // cout << "loop 1"<< endl;
                 // cout << "ncount "<< ncount << " tp "<< it->first << endl;
                 if(ncount > 4 && pu_pt->at(it->first) > 3.){
-
+                    if(patternInAMsector) RecoTracksInAMsector.insert(it->first);
                     RecoTracks.insert(it->first);
                     // cout << "Track "<< it->first << endl;
                     if(ht->trackCandFound()){
                        RecoFiltTracks.insert(it->first);
+                       if(patternInAMsector)RecoFiltTracksInAMsector.insert(it->first);
                     } else{
                         // cout <<"Stubs surviving HT "<<ht->maxNumStubs() <<  endl;
                         if(htType==0){
@@ -620,14 +686,25 @@ int main(int argc, char* argv[]){
                                 TracksOutOfRange++;
                             else
                                 MissedTrack++;
-                            // cout << "Track q/pt "<< double(pu_charge->at(it->first))/pu_pt->at(it->first) << " phi "<< pu_phi->at(it->first) <<endl;
+                            if(debug==2)
+                                cout << "Track q/pt "<< double(pu_charge->at(it->first))/pu_pt->at(it->first) << " phi "<< pu_phi->at(it->first) << " array y: ["<< ht->yMin() << " , "<< ht->yMax()<<"]"<< " array x : ["<< ht->xMin() << ", "<< ht->xMax() << "]"<< " xmin "<<xmin << " xmax "<< xmax << " charge " << charge << " pattId "<<patt_id->at(iroad) << endl;
                         }
 
                         if(htType==1){
-                            if( 1/tan(pu_theta->at(it->first)) < ht->xMin() || 1/tan(pu_theta->at(it->first)) > ht->xMax() || pu_vz->at(it->first) < ht->yMin() || pu_vz->at(it->first) > ht->yMax() )
+                            if(averageRes==0){
+                                if( 1/tan(pu_theta->at(it->first)) < ht->xMin() || 1/tan(pu_theta->at(it->first)) > ht->xMax() || pu_vz->at(it->first) < ht->yMin() || pu_vz->at(it->first) > ht->yMax() )
                                 TracksOutOfRange++;
                             else
                                 MissedTrack++;
+                        } else{
+                            if( 1/tan(pu_theta->at(it->first)) < 1/tan(2.) || 1/tan(pu_theta->at(it->first)) > 1/tan(0.8) || pu_vz->at(it->first) < ht->yMin() || pu_vz->at(it->first) > ht->yMax() ){
+                                TracksOutOfRange++;
+                                cout << "Track cotan(theta) " <<1/tan(pu_theta->at(it->first))<< " array x: ["<<1/tan(2.) << " , "<< 1/tan(0.8)<< " z0: "<< pu_vz->at(it->first) << " y : ["<< ht->yMin() << " , " << ht->yMax() << endl;
+                            }
+                            else
+                                MissedTrack++;
+                        }
+
                             // cout << "Track q/pt "<< double(pu_charge->at(it->first))/pu_pt->at(it->first) << " phi "<< pu_phi->at(it->first) <<endl;
                         }
 
@@ -650,6 +727,7 @@ int main(int argc, char* argv[]){
 
             if(ht->trackCandFound()){
                 nFilteredPatterns++;
+                if(patternInAMsector) nFiltPatternsInAMsector++;
                 hStubsPerFiltPattern->Fill(ht->maxNumStubs());
                 std::vector<unsigned int> vFiltLayers(30,0);
                 for(Stub* stub: ht->FilteredStubs()){
@@ -683,6 +761,10 @@ int main(int argc, char* argv[]){
         hFiltRecoTracks->Fill(RecoFiltTracks.size());
         hFilteredPatterns->Fill(nFilteredPatterns);
         hPatterns->Fill(n_prepatterns);
+
+        RecoTPinAMsector = RecoTPinAMsector + RecoTracksInAMsector.size();
+        FiltRecoTPinAMsector = FiltRecoTPinAMsector + RecoFiltTracksInAMsector.size();
+
     }
 
     // Save the histograms
@@ -736,6 +818,13 @@ int main(int argc, char* argv[]){
     cout << "Average number of Special Combinations per filtered Pattern "<< hFiltSpecComb->GetMean()<< endl;
 
     cout << "Tracks out of array ranges: "<<TracksOutOfRange<< ", missed tracks: "<< MissedTrack << endl;
+
+    cout << "==== COMPARISON in TMT sector (4,26) =====" << endl;
+    cout << "Number of Patterns "<< nPatternsInAMsector << endl;
+    cout << "Number of Filtered Patterns "<< nFiltPatternsInAMsector << endl;
+    cout << "Number of Reco TPs "<< RecoTPinAMsector << endl;
+    cout << "Number of Filtered Reco TPs "<< FiltRecoTPinAMsector << endl;
+
 
     f.Close();
 }
